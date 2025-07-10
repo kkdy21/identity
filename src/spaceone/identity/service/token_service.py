@@ -76,6 +76,7 @@ class TokenService(BaseService):
         credentials = params.credentials
         auth_type = params.auth_type
 
+        # MEMO : 도메인에 대한 정보를 가져온다.
         private_jwk = self.domain_secret_mgr.get_domain_private_key(domain_id=domain_id)
         refresh_private_jwk = self.domain_secret_mgr.get_domain_refresh_private_key(
             domain_id=domain_id
@@ -84,6 +85,8 @@ class TokenService(BaseService):
         # Check Domain state is ENABLED
         self._check_domain_state(domain_id)
 
+        # MEMO : 토큰 매니저를 가져온다. 이때 auth_type LOCAL, EXTERNAL 등이있다. // manager/token_manager에 선언된 클래스가 반환됨
+        # MEMO : 아이디 비밀번호 검증 로직 및 최초로그인 판단
         try:
             token_mgr = TokenManager.get_token_manager_by_auth_type(auth_type)
             token_mgr.authenticate(
@@ -93,18 +96,26 @@ class TokenService(BaseService):
             self._increment_issue_attempts(domain_id, credentials, auth_type)
             raise e
 
+        # MEMO : MFA 검증 로직
         user_vo = token_mgr.user
         user_mfa = user_vo.mfa.to_dict() if user_vo.mfa else {}
         mfa_type = user_mfa.get("mfa_type")
+        # MEMO : 임시 권한 부여 -> 추후 토큰 발급시 사용  토큰에는 다른 모든 권한은 없고, 오직 이 identity:UserProfile 권한만 포함
         permissions = self._get_permissions_from_required_actions(user_vo)
+        _LOGGER.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@permissions: {permissions}")
 
         mfa_user_id = user_vo.user_id
 
+        # MEMO : SAML 로그인 판단하여 SAML이면 넘어감 // 아니면 MFA 검증 로직 진행 // 6. 현재 인증 방식이 MFA를 처리해야 하는지 확인
         if self._check_login_protocol_with_user_auth_type(auth_type, domain_id):
+            # MEMO : 7. MFA가 활성화되어 있는지, 그리고 현재 로그인한 방식이 MFA방식인지 판단
             if user_mfa.get("state", "DISABLED") == "ENABLED" and auth_type != "MFA":
+                # MEMO : 8. MFA 유형에 따라 적절한 MFA 관리자 인스턴스 생성
                 mfa_manager = MFAManager.get_manager_by_mfa_type(mfa_type)
+                # MEMO : 9. 이메일 MFA 인증 코드 발송
                 if mfa_type == "EMAIL":
                     mfa_email = user_mfa["options"].get("email")
+                    # MEMO : 9-1. 이메일 MFA 인증 코드 발송 메서드 호출
                     mfa_manager.send_mfa_authentication_email(
                         user_vo.user_id,
                         domain_id,
@@ -115,6 +126,7 @@ class TokenService(BaseService):
                     mfa_user_id = mfa_email
 
                 elif mfa_type == "OTP":
+                    # MEMO : 10. OTP MFA 인증 코드 발송
                     secret_manager: SecretManager = self.locator.get_manager(
                         SecretManager
                     )
@@ -123,12 +135,15 @@ class TokenService(BaseService):
                         user_secret_id, domain_id
                     )
 
+                    # MEMO : 10-1. OTP MFA 인증 코드 발송 메서드 호출
                     mfa_manager.set_cache_otp_mfa_secret_key(
                         otp_secret_key, user_vo.user_id, domain_id, credentials
                     )
 
+                # MEMO : 11. "MFA 인증이 필요합니다" 라는 특정 에러를 발생시킵니다. 현재 인증방식이 MFA가 아니라면 무조건 raise 됨
                 raise ERROR_MFA_REQUIRED(user_id=mfa_user_id, mfa_type=mfa_type)
 
+        # MEMO : 12. 토큰 발급 로직
         token_info = token_mgr.issue_token(
             private_jwk,
             refresh_private_jwk,
@@ -136,7 +151,8 @@ class TokenService(BaseService):
             timeout=timeout,
             permissions=permissions,
         )
-
+        _LOGGER.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@token_info: {token_info}")
+        # MEMO : 13. 토큰 발급 후 로그인 시도 횟수 초기화
         self._clear_issue_attempts(domain_id, credentials, auth_type)
 
         return TokenResponse(**token_info)

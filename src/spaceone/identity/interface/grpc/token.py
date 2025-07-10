@@ -1,6 +1,9 @@
+import logging
 from spaceone.core.pygrpc import BaseAPI
 from spaceone.api.identity.v2 import token_pb2, token_pb2_grpc
 from spaceone.identity.service.token_service import TokenService
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class Token(BaseAPI, token_pb2_grpc.TokenServicer):
@@ -9,6 +12,7 @@ class Token(BaseAPI, token_pb2_grpc.TokenServicer):
 
     def issue(self, request, context):
         params, metadata = self.parse_request(request, context)
+        _LOGGER.info(f"#########################token issue request: params={params}, metadata={metadata}")
         token_svc = TokenService(metadata)
         response: dict = token_svc.issue(params)
         return self.dict_to_message(response)

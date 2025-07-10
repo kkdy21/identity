@@ -25,6 +25,7 @@ class MFATokenManager(TokenManager):
         self.external_auth_mgr = ExternalAuthManager()
         self.user_mgr = UserManager()
 
+    # MEMO : 실제 인증 로직이 구현된 메서드
     def authenticate(self, domain_id: str, **kwargs):
         credentials = kwargs.get("credentials", {})
         mfa_info = MFAManager.get_mfa_info(credentials)

@@ -33,6 +33,7 @@ class TokenManager(BaseManager, ABC):
 
     @classmethod
     def get_token_manager_by_auth_type(cls, auth_type):
+        # MEMO : subclass는 본인을 상속받은 클래스들 즉 자식클래스들을 볼수있다.파이썬 특징.
         for subclass in cls.__subclasses__():
             if subclass.auth_type == auth_type:
                 return subclass()

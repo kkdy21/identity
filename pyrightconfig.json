@@ -1,0 +1,14 @@
+{
+    // Pyright의 타입 검사 강도를 'basic'으로 설정합니다.
+    // 'strict'보다 덜 엄격해서 처음 설정할 때 가장 좋습니다.
+    "typeCheckingMode": "off",
+  
+    // 타입 정보가 없는 라이브러리(예: numpy, pandas)를 사용할 때
+    // 발생하는 오류를 무시해 줍니다.
+    "reportMissingTypeStubs": false,
+  
+    // 검사에서 제외할 폴더를 지정합니다. (가상환경 폴더 등)
+    "exclude": [
+      ".venv"
+    ]
+  }

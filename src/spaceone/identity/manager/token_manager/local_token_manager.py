@@ -33,8 +33,8 @@ class LocalTokenManager(TokenManager):
         if is_correct:
             self.is_authenticated = True
 
-            if self.user.state == "PENDING":
-                self.user_mgr.update_user_by_vo({"state": "ENABLED"}, self.user)
+            if self.user.state == "PENDING": # MEMO : 첫 로그인을 성공한 것이므로 계정 상태를 ENABLED(활성)로 업데이트하여 계정을 완전히 활성화시켜 줍니다.
+                self.user_mgr.update_user_by_vo({"state": "ENABLED"}, self.user) # MEMO : self.user으로 DB에서 조회한 값을 전달
 
         else:
             raise ERROR_AUTHENTICATION_FAILURE(user_id=self.user.user_id)

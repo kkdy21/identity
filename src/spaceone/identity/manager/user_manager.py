@@ -58,8 +58,10 @@ class UserManager(BaseManager):
 
         return user_vo
 
+    # MEMO : 유저정보를 DB에 업데이트시 활용하는 메서드
     def update_user_by_vo(self, params: dict, user_vo: User) -> User:
-        def _rollback(old_data):
+        # MEMO : 트랜잭션이 실패할 경우 원래의 user_vo로 되돌리기 위함. 만들어 놓고 밑에서(add_rollback)으로 등록
+        def _rollback(old_data): 
             _LOGGER.info(
                 f'[update_user_by_vo._rollback] Revert Data: {old_data["user_id"]}'
             )
@@ -76,12 +78,15 @@ class UserManager(BaseManager):
 
         if new_password := params.get("password"):
             if PasswordCipher().checkpw(new_password, user_vo.password):
+                # MEMO : 변경 여부 확인: 새 비밀번호가 기존 비밀번호와 동일하면 "비밀번호가 변경되지 않았습니다" 라는 에러를 발생시킵니다.
                 raise ERROR_PASSWORD_NOT_CHANGED(user_id=user_vo.user_id)
 
+            # MEMO : 비밀번호 형식 검사
             self._check_password_format(params["password"])
             hashed_pw = PasswordCipher().hashpw(params["password"])
             params["password"] = hashed_pw
 
+            # MEMO : 새로운 비밀번호라면 required_actions에서 UPDATE_PASSWORD 제거
             if "UPDATE_PASSWORD" in required_actions:
                 required_actions.remove("UPDATE_PASSWORD")
                 is_change_required_actions = True
