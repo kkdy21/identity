@@ -258,14 +258,19 @@ class UserProfileService(BaseService):
         options = params.options
         domain_id = params.domain_id
 
+        # user_id와 domin_id로 user document 조회
         user_vo = self.user_mgr.get_user(user_id, domain_id)
+        # user_vo.mfa 가 있으면 그것을 딕셔너리로 변환하여 user_mfa에 저장
         user_mfa = user_vo.mfa.to_dict() if user_vo.mfa else {}
 
+        # MFA 옵션이 EMAIL일 경우 res payload 체크
         self._check_mfa_options(options, mfa_type)
 
+        # MFA가 활성화 되어있는지 확인 후 활성화 되어있으면 에러 발생
         if user_mfa.get("state", "DISABLED") == "ENABLED":
             raise ERROR_MFA_ALREADY_ENABLED(user_id=user_id)
 
+        # MFA 매니저 인스턴스 생성
         mfa_manager = MFAManager.get_manager_by_mfa_type(mfa_type)
 
         user_mfa["mfa_type"] = mfa_type

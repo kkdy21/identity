@@ -102,7 +102,6 @@ class TokenService(BaseService):
         mfa_type = user_mfa.get("mfa_type")
         # MEMO : 임시 권한 부여 -> 추후 토큰 발급시 사용  토큰에는 다른 모든 권한은 없고, 오직 이 identity:UserProfile 권한만 포함
         permissions = self._get_permissions_from_required_actions(user_vo)
-        _LOGGER.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@permissions: {permissions}")
 
         mfa_user_id = user_vo.user_id
 
@@ -135,13 +134,22 @@ class TokenService(BaseService):
                         user_secret_id, domain_id
                     )
 
-                    # MEMO : 10-1. OTP MFA 인증 코드 발송 메서드 호출
+                    # MEMO : 10-1. OTP MFA 인증코드를 OTP 비밀키를 Redis에 미리 넣어둠
                     mfa_manager.set_cache_otp_mfa_secret_key(
                         otp_secret_key, user_vo.user_id, domain_id, credentials
                     )
-
-                # MEMO : 11. "MFA 인증이 필요합니다" 라는 특정 에러를 발생시킵니다. 현재 인증방식이 MFA가 아니라면 무조건 raise 됨
-                raise ERROR_MFA_REQUIRED(user_id=mfa_user_id, mfa_type=mfa_type)
+                    token_info = token_mgr.issue_token(
+                        private_jwk,
+                        refresh_private_jwk,
+                        domain_id,
+                        timeout=timeout,
+                        permissions=permissions,
+                    )
+                # MEMO : 11. "MFA 인증이 필요합니다" 라는 특정 에러를 발생시킵니다.// 현재 인증방식이 MFA가 아니라면 무조건 raise 됨
+                raise ERROR_MFA_REQUIRED(
+                    user_id=mfa_user_id,
+                    mfa_type=mfa_type,
+                )
 
         # MEMO : 12. 토큰 발급 로직
         token_info = token_mgr.issue_token(
@@ -320,7 +328,10 @@ class TokenService(BaseService):
 
     @staticmethod
     def _get_permissions_from_required_actions(user_vo: User) -> Union[List[str], None]:
-        if "UPDATE_PASSWORD" in user_vo.required_actions:
+        if (
+            "UPDATE_PASSWORD" in user_vo.required_actions
+            or "MFA_ENFORCE" in user_vo.required_actions
+        ):
             return [
                 "identity:UserProfile",
             ]
