@@ -620,3 +620,54 @@ class UserService(BaseService):
             secret_manager.delete_user_secret_with_system_token(
                 domain_id, user_secret_id
             )
+
+    # enforce_mfa_state mfa_state에 따라서 required_actions에 ENFORCE_MFA를 추가하거나 제거하는 로직 추가
+    # enforce_mfa_state mfa_state에 따라서 user_mfa options 삭제 또는 유지 또는 필드 추가
+    # enforce_mfa_type, enforce_mfa_state mfa_state에 따라서 mfa_type 삭제 또는 유지 또는 변경
+
+    def _set_mfa_base_condition(self, user_vo: User, mfa_type: str, domain_id: str):
+        update_user_vo = user_vo.to_dict()
+
+        required_actions = set(user_vo.required_actions)
+
+        if user_vo.mfa.get("mfa_type") != mfa_type:
+            if user_vo.mfa.get("mfa_type") == "OTP":
+                self.__delete_otp_secret(user_vo, domain_id)
+            update_user_vo["mfa"]["state"] = "DISABLED"
+            update_user_vo["mfa"]["mfa_type"] = mfa_type
+            update_user_vo["mfa"]["options"].clear()
+
+        return update_user_vo, required_actions
+
+    def _unset_mfa_base_condition(self, user_vo: User):
+        update_user_vo = user_vo.to_dict()
+        required_actions = set(user_vo.required_actions)
+
+        if update_user_vo["mfa"]["state"] == "DISABLED":
+            update_user_vo["mfa"].pop("mfa_type", None)
+
+        return update_user_vo, required_actions
+
+    def _set_enforce_condition(self, user_vo: User):
+        update_user_vo = user_vo.to_dict()
+        required_actions = set(user_vo.required_actions)
+
+        update_user_vo["mfa"]["options"].pop("enforce", None)
+        required_actions.discard("ENFORCE_MFA")
+
+        return update_user_vo, required_actions
+
+    def _unset_enforce_condition(self, user_vo: User):
+        update_user_vo = user_vo.to_dict()
+        required_actions = set(user_vo.required_actions)
+        update_user_vo["mfa"]["options"].pop("enforce", None)
+        required_actions.discard("ENFORCE_MFA")
+        return update_user_vo, required_actions
+
+
+# set_enforcement
+# set_enforcement_mfa
+# unset_enforcement
+# reset_user_mfa
+# confirm_and_activate
+# confirm_and_disable

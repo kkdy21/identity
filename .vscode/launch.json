@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "gRPC 서버 (identity)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "spaceone.core.command",
+            "args": [
+                "run",
+                "grpc-server",
+                "spaceone.identity"
+            ],
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/src",
+                "PYTHONUNBUFFERED": "1",
+                "SPACEONE_CONFIG_FILE": "/Users/mzc01-rowan/Documents/spaceone/backend/config/GRCP/grpc.yaml"
+            }
+        }
+    ]
+}
