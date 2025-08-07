@@ -709,3 +709,134 @@ class UserService(BaseService):
             secret_manager.delete_user_secret_with_system_token(
                 domain_id, user_secret_id
             )
+
+    # set required_actions
+    def _set_required_actions_enforce_mfa(
+        self, user_vo: User, enforce_mfa: bool, enforce_mfa_type: str | None
+    ):
+        """
+        ENFORCE_MFA 추가 조건:
+            1. MFA 강제가 활성화되어 있고 (enforce_mfa=True)
+            2. 다음 중 하나를 만족:
+            - 사용자 MFA 타입이 강제 타입과 다름
+            - 사용자 MFA 타입이 강제 타입과 같지만 비활성화 상태
+
+        ENFORCE_MFA 제거 조건 (우선순위):
+            1. MFA 강제가 비활성화됨 (enforce_mfa=False)
+            2. 사용자가 올바른 MFA 타입으로 활성화 상태
+        """
+
+        user_mfa: dict = user_vo.mfa.to_dict()
+        user_mfa_type = user_mfa.get("mfa_type", None)
+        user_mfa_state = user_mfa.get("state", None)
+        required_actions: set = set(user_vo.required_actions)
+
+        # 우선순위 1: MFA 강제가 비활성화된 경우 무조건 제거
+        if not enforce_mfa:
+            required_actions.discard("ENFORCE_MFA")
+            return list(required_actions)
+
+        # 우선순위 2: 올바른 MFA 타입이 활성화된 경우 제거
+        if user_mfa_type == enforce_mfa_type and user_mfa_state == "ENABLED":
+            required_actions.discard("ENFORCE_MFA")
+            return list(required_actions)
+
+        # 그 외의 경우: MFA 강제 일떄
+        # - MFA 타입이 다름
+        # - MFA 타입이 같지만 비활성화됨
+        # - MFA가 설정되지 않음
+        required_actions.add("ENFORCE_MFA")
+        return list(required_actions)
+
+    # set options
+    def _set_enforce_mfa_options(
+        self,
+        user_vo: User,
+        should_disable_current_mfa: bool,  # 이거를 앞으로 변경될 값을 전달해줘야할지 고민. 현재 MFA를 비활성화해야 하는지 여부
+        enforce_mfa: bool,
+        enforce_mfa_type: str | None,
+        domain_id: str,
+    ):
+        """
+        - MFA 강제가 활성화 되어있고, enforce_mfa_type과 user_mfa_type이 다를 때 user_vo_mfa_type이 OTP이면 _delete_otp_secret호출 해야함 (기존 MFA를 비활성화)
+        - enforce_mfa가 true이면 options:{enforce : true} 추가
+        - enforce_mfa가 false이면 options에서 enforce 제거
+        참고) mfa가 활성화되면 mfa.options에는 mfa타입이 email이면 options.email이 존재. otp면 options.user_secret_id가 존재하는 상태인데 mfa를 비활성화 하면 삭제해줘야함.
+
+        """
+
+        user_mfa: dict = user_vo.mfa.to_dict()
+        user_mfa_options = user_mfa.get("options", {})
+        user_mfa_state = user_mfa.get("state", None)
+        user_mfa_type = user_mfa.get("mfa_type", None)
+
+        # mfa를 disable 해야하는 경우
+        if should_disable_current_mfa:
+            delete_field_map = {"OTP": "user_secret_id", "EMAIL": "email"}
+            if user_mfa_type in delete_field_map:
+                if user_mfa_type == "OTP" and user_mfa_state == "ENABLED":
+                    self._delete_otp_secret(user_vo, domain_id)
+                user_mfa_options.pop(delete_field_map[user_mfa_type], None)
+
+        if enforce_mfa:
+            user_mfa_options["enforce"] = True
+        else:
+            user_mfa_options.pop("enforce", None)
+
+    # set mfa_base_condition
+
+    def _reset_mfa_type_for_enforcement(
+        self,
+        user_vo: User,
+        enforce_mfa: bool,
+        enforce_mfa_type: str | None,
+    ):
+        """
+        - enforce_mfa가 true이면 enforce_mfa_type이 있으면 현재 설정된 user_vo.mfa.mfa_type과 비교하여 같다면 현재 설정된 mfa.state를 유지하고 다르면 DISABLED로 변경 하고 mfa_type을 enforce_mfa_type로 변경
+        """
+
+        user_mfa: dict = user_vo.mfa.to_dict()
+        mfa_type = user_mfa.get("mfa_type", None)
+
+        if enforce_mfa:
+            if enforce_mfa_type:
+                if mfa_type != enforce_mfa_type:
+                    user_mfa["state"] = "DISABLED"
+                    user_mfa["mfa_type"] = enforce_mfa_type
+
+        return user_mfa
+
+    def _validate_mfa_enforce_params(
+        self,
+        enforce_mfa: bool,
+        enforce_mfa_type: str | None,
+    ):
+        """
+        - enforce mfa가 true일 때 enforce_mfa_type이 있어야함
+        - enforce mfa가 있는데 enforce_mfa_type이 없으면 에러 발생
+        - enforce mfa가 없을 때 enforce_mfa_type이 있으면 에러 발생 (enforce_mfa가 없을때 유저가 개인적으로 설정하는건 따로 api가 있음)
+        """
+        if enforce_mfa:
+            if not enforce_mfa_type:
+                raise ERROR_INVALID_PARAMETER(
+                    key="enforce_mfa_type",
+                    reason="enforce_mfa_type is required when enforce_mfa is true",
+                )
+        else:
+            if enforce_mfa_type:
+                raise ERROR_INVALID_PARAMETER(
+                    key="enforce_mfa_type",
+                    reason="enforce_mfa_type is not allowed when enforce_mfa is false",
+                )
+
+    def _should_disable_current_mfa(
+        self,
+        enforce_mfa: bool,
+        enforce_mfa_type: str | None,
+        user_mfa_type: str | None,
+    ):
+        return (
+            enforce_mfa
+            and enforce_mfa_type != user_mfa_type
+            and user_mfa_type is not None
+        )
