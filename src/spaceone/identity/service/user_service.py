@@ -689,35 +689,46 @@ class UserService(BaseService):
         enforce_mfa_type: Optional[str],
     ) -> List[str]:
         """
-        ENFORCE_MFA 추가 조건:
-            1. MFA 강제가 활성화되어 있고 (enforce_mfa=True)
-            2. 다음 중 하나를 만족:
-            - 사용자 MFA 타입이 강제 타입과 다름
-            - 사용자 MFA 타입이 강제 타입과 같지만 비활성화 상태
+        Calculate updated required_actions based on MFA enforcement policy.
 
-        ENFORCE_MFA 제거 조건 (우선순위):
-            1. MFA 강제가 비활성화됨 (enforce_mfa=False)
-            2. 사용자가 올바른 MFA 타입으로 활성화 상태
+        ENFORCE_MFA addition conditions:
+            1. MFA enforcement is enabled (is_enforced_mfa=True) AND
+            2. One of the following conditions is met:
+               - User's MFA type differs from the enforced type
+               - User's MFA type matches but is in DISABLED state
+               - User has no MFA configured
+
+        ENFORCE_MFA removal conditions (priority order):
+            1. MFA enforcement is disabled (is_enforced_mfa=False)
+            2. User has correct MFA type in ENABLED state
+
+        Args:
+            user_mfa: Current user's MFA configuration
+            current_required_actions: Current required actions list
+            is_enforced_mfa: Whether MFA enforcement is enabled
+            enforce_mfa_type: The MFA type to enforce (if enforcement is enabled)
+
+        Returns:
+            Updated required_actions list with ENFORCE_MFA properly managed
         """
-
         user_mfa_type = user_mfa.get("mfa_type", None)
         user_mfa_state = user_mfa.get("state", None)
         required_actions: set = set(current_required_actions)
 
-        # MFA 강제가 비활성화된 경우 무조건 제거
+        # Remove ENFORCE_MFA if MFA enforcement is disabled
         if not is_enforced_mfa:
             required_actions.discard("ENFORCE_MFA")
             return list(required_actions)
 
-        # 올바른 MFA 타입이 활성화된 경우 제거
+        # Remove ENFORCE_MFA if user has correct MFA type in enabled state
         if user_mfa_type == enforce_mfa_type and user_mfa_state == "ENABLED":
             required_actions.discard("ENFORCE_MFA")
             return list(required_actions)
 
-        # 그 외의 경우: MFA 강제 일떄
-        # - MFA 타입이 다름
-        # - MFA 타입이 같지만 비활성화됨
-        # - MFA가 설정되지 않음
+        # Add ENFORCE_MFA in other cases when enforcement is enabled:
+        # - MFA type differs from enforced type
+        # - MFA type matches but is disabled
+        # - No MFA is configured
         required_actions.add("ENFORCE_MFA")
         return list(required_actions)
 
@@ -729,11 +740,27 @@ class UserService(BaseService):
         is_explicit_reset: bool,
     ) -> dict:
         """
-        - MFA 강제가 활성화 되어있고, enforce_mfa_type과 user_mfa_type이 다를 때 user_vo_mfa_type이 OTP이면 _delete_otp_secret호출 해야함 (기존 MFA를 비활성화)
-        - enforce_mfa가 true이면 options:{enforce : true} 추가
-        - enforce_mfa가 false이면 options에서 enforce 제거
-            참고) mfa가 활성화되면 mfa.options에는 mfa타입이 email이면 options.email이 존재. otp면 options.user_secret_id가 존재하는 상태인데 mfa를 비활성화 하면 삭제해줘야함.
+        Calculate MFA options configuration based on enforcement policy and reset requirements.
 
+        This function manages MFA-related options in the user's MFA configuration:
+        - Adds/removes 'enforce' flag based on MFA enforcement policy
+        - Cleans up type-specific options (user_secret_id for OTP, email for EMAIL) when reset is needed
+        - Handles OTP secret deletion when transitioning away from OTP MFA
+
+        Args:
+            user_vo: User object containing current MFA configuration
+            domain_id: Domain ID for OTP secret deletion operations
+            is_enforced_mfa: Whether MFA enforcement is enabled
+            is_explicit_reset: Whether to explicitly reset current MFA options
+
+        Returns:
+            Updated MFA options dictionary
+
+        Note:
+            When MFA is enabled, options contain type-specific data:
+            - OTP type: options.user_secret_id exists
+            - EMAIL type: options.email exists
+            These are cleaned up when MFA is disabled or reset.
         """
         user_mfa: dict = user_vo.mfa.to_dict() if user_vo.mfa else {}
         user_mfa_options: dict = user_mfa.get("options", {})
@@ -742,7 +769,7 @@ class UserService(BaseService):
 
         new_options = copy.deepcopy(user_mfa_options)
 
-        # mfa를 disable 해야하는 경우
+        # Clean up MFA-specific options when explicit reset is required
         if is_explicit_reset:
             delete_field_map = {"OTP": "user_secret_id", "EMAIL": "email"}
             if user_mfa_type in delete_field_map:
@@ -750,6 +777,7 @@ class UserService(BaseService):
                     self._delete_otp_secret(user_vo, domain_id)
                 new_options.pop(delete_field_map[user_mfa_type], None)
 
+        # Manage enforcement flag based on policy
         if is_enforced_mfa:
             new_options["enforce"] = True
         else:
@@ -762,44 +790,59 @@ class UserService(BaseService):
         user_mfa: dict,
         is_enforced_mfa: bool,
         enforce_mfa_type: Optional[str],
-        is_explicit_reset: bool,  # 기존 정보가 들어있는데 명시적으로 삭제해야 하는 경우
+        is_explicit_reset: bool,
     ) -> dict:
         """
-        MFA 기본 설정 (state, mfa_type) 관리
+        Calculate MFA base configuration (state and mfa_type) based on enforcement policy.
 
-        - MFA 강제가 활성화되고 타입이 변경되면 DISABLED 상태로 리셋
-        - MFA 강제가 비활성화되고 기존 MFA가 비활성화 상태면 mfa_type 제거
-        - MFA 상태를 disable 처리 및 mfa_type 제거 또는 유지 해야하는 경우가있음
+        This function determines the appropriate MFA state and type based on:
+        - Current MFA configuration
+        - MFA enforcement policy
+        - Whether explicit reset is requested (e.g., from disable_mfa API)
+
+        Logic:
+        - When enforcement is enabled and type changes: Reset to DISABLED with new type
+        - When enforcement is disabled and MFA is already disabled: Remove mfa_type
+        - When explicit reset is requested: Force DISABLED state
+        - Otherwise: Maintain current state and type
+
+        Args:
+            user_mfa: Current user's MFA configuration
+            is_enforced_mfa: Whether MFA enforcement is enabled
+            enforce_mfa_type: The MFA type to enforce (if enforcement is enabled)
+            is_explicit_reset: Whether explicit disable is requested (e.g., disable_mfa API)
+
+        Returns:
+            Dictionary containing updated 'state' and optionally 'mfa_type'
         """
-
-        # disable 및 enabled 처리 둘다 해줘야야함.
-
         current_state = user_mfa.get("state", "DISABLED")
         current_type = user_mfa.get("mfa_type")
 
-        # 명시적으로 disable 처리 해야하는 경우.
+        # Handle explicit reset requests (e.g., disable_mfa API)
         if is_explicit_reset:
             if is_enforced_mfa:
+                # Keep type even with explicit disable if enforcement policy exists
                 return {"state": "DISABLED", "mfa_type": current_type}
             else:
+                # Remove type when no enforcement policy and explicit disable
                 return {"state": "DISABLED"}
 
-        else:
-            if is_enforced_mfa:
-                # MFA 강제 시 타입이 변경되면 비활성화 상태로 리셋
-                if current_type != enforce_mfa_type:
-                    return {"state": "DISABLED", "mfa_type": enforce_mfa_type}
-                else:
-                    # 타입이 같으면 현재 상태 유지
-                    return {"state": current_state, "mfa_type": current_type}
+        # Handle normal MFA state calculation
+        if is_enforced_mfa:
+            # Reset to DISABLED when MFA type changes under enforcement
+            if current_type != enforce_mfa_type:
+                return {"state": "DISABLED", "mfa_type": enforce_mfa_type}
             else:
-                # MFA 강제 해제 시
-                if current_state == "DISABLED":
-                    # 비활성화 상태면 타입도 제거
-                    return {"state": current_state}
-                else:
-                    # 활성화 상태면 현재 설정 유지
-                    return {"state": current_state, "mfa_type": current_type}
+                # Maintain current state when type matches
+                return {"state": current_state, "mfa_type": current_type}
+        else:
+            # Handle enforcement removal
+            if current_state == "DISABLED":
+                # Remove type when already disabled and no enforcement
+                return {"state": current_state}
+            else:
+                # Preserve user's personal MFA settings when active
+                return {"state": current_state, "mfa_type": current_type}
 
     def _validate_mfa_enforce_params(
         self,
@@ -808,11 +851,22 @@ class UserService(BaseService):
         auth_type: str,
     ) -> None:
         """
-        - enforce mfa가 true일 때 enforce_mfa_type이 있어야함
-        - enforce mfa가 있는데 enforce_mfa_type이 없으면 에러 발생
-        - enforce mfa가 없을 때 enforce_mfa_type이 있으면 에러 발생 (enforce_mfa가 없을때 유저가 개인적으로 설정하는건 따로 api가 있음)
-        """
+        Validate MFA enforcement parameters for consistency and business rules.
 
+        Validation rules:
+        - When MFA enforcement is enabled: enforce_mfa_type must be provided
+        - When MFA enforcement is disabled: enforce_mfa_type must not be provided
+        - EXTERNAL auth type: MFA enforcement is not allowed
+
+        Args:
+            is_enforced_mfa: Whether MFA enforcement is enabled
+            enforce_mfa_type: The MFA type to enforce (required when enforcement is enabled)
+            auth_type: User's authentication type
+
+        Raises:
+            ERROR_REQUIRED_PARAMETER: When enforce_mfa_type is missing but required
+            ERROR_INVALID_PARAMETER: When parameters violate business rules
+        """
         if is_enforced_mfa:
             if not enforce_mfa_type:
                 raise ERROR_REQUIRED_PARAMETER(key="enforce_mfa_type")
@@ -820,13 +874,13 @@ class UserService(BaseService):
             if auth_type == "EXTERNAL":
                 raise ERROR_INVALID_PARAMETER(
                     key="enforce_mfa",
-                    reason="enforce_mfa is not allowed when auth_type is external",
+                    reason="MFA enforcement is not allowed for external authentication",
                 )
         else:
             if enforce_mfa_type:
                 raise ERROR_INVALID_PARAMETER(
                     key="enforce_mfa_type",
-                    reason="Type can only be set when mfa enforce is ENABLED.",
+                    reason="MFA type can only be specified when enforcement is enabled",
                 )
 
     def _should_reset_current_mfa(
@@ -835,6 +889,22 @@ class UserService(BaseService):
         enforce_mfa_type: str | None,
         user_mfa_type: str | None,
     ) -> bool:
+        """
+        Determine if current MFA configuration should be reset due to type mismatch.
+
+        Reset is required when:
+        - MFA enforcement is enabled AND
+        - Enforced MFA type differs from user's current MFA type AND
+        - User has an existing MFA type configured
+
+        Args:
+            is_enforced_mfa: Whether MFA enforcement is enabled
+            enforce_mfa_type: The MFA type to enforce
+            user_mfa_type: User's current MFA type
+
+        Returns:
+            True if MFA reset is required, False otherwise
+        """
         return (
             is_enforced_mfa
             and enforce_mfa_type != user_mfa_type
