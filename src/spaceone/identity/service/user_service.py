@@ -240,17 +240,18 @@ class UserService(BaseService):
             )
             update_user_vo["mfa"]["options"] = self._get_mfa_options_config(
                 user_vo,
+                domain_id,
+                mfa_enforce,
                 self._should_reset_current_mfa(
                     mfa_enforce, enforce_mfa_type, user_vo_mfa_type
                 ),
-                mfa_enforce,
-                domain_id,
             )
 
-            update_require_actions.update(
-                self._get_updated_required_actions(
-                    user_vo, mfa_enforce, enforce_mfa_type
-                )
+            update_require_actions = self._get_updated_required_actions(
+                user_vo_mfa,
+                list(update_require_actions),
+                mfa_enforce,
+                enforce_mfa_type,
             )
 
             update_user_vo["required_actions"] = list(update_require_actions)
@@ -324,12 +325,12 @@ class UserService(BaseService):
 
         # option 처리
         update_user_vo["mfa"]["options"] = self._get_mfa_options_config(
-            user_vo, True, mfa_enforce, domain_id
+            user_vo, domain_id, mfa_enforce, True
         )
 
         # required_action 처리
         update_user_vo["required_actions"] = self._get_updated_required_actions(
-            user_vo, mfa_enforce, None
+            user_mfa, user_vo.required_actions, mfa_enforce, None
         )
 
         user_vo = self.user_mgr.update_user_by_vo(update_user_vo, user_vo)
@@ -681,7 +682,11 @@ class UserService(BaseService):
             )
 
     def _get_updated_required_actions(
-        self, user_vo: User, enforce_mfa: bool, enforce_mfa_type: Optional[str]
+        self,
+        user_mfa: dict,
+        current_required_actions: List[str],
+        is_enforced_mfa: bool,
+        enforce_mfa_type: Optional[str],
     ) -> List[str]:
         """
         ENFORCE_MFA 추가 조건:
@@ -695,13 +700,12 @@ class UserService(BaseService):
             2. 사용자가 올바른 MFA 타입으로 활성화 상태
         """
 
-        user_mfa: dict = user_vo.mfa.to_dict() if user_vo.mfa else {}
         user_mfa_type = user_mfa.get("mfa_type", None)
         user_mfa_state = user_mfa.get("state", None)
-        required_actions: set = set(user_vo.required_actions)
+        required_actions: set = set(current_required_actions)
 
         # MFA 강제가 비활성화된 경우 무조건 제거
-        if not enforce_mfa:
+        if not is_enforced_mfa:
             required_actions.discard("ENFORCE_MFA")
             return list(required_actions)
 
@@ -720,9 +724,9 @@ class UserService(BaseService):
     def _get_mfa_options_config(
         self,
         user_vo: User,
-        should_reset_mfa: bool,
-        enforce_mfa: bool,
         domain_id: str,
+        is_enforced_mfa: bool,
+        is_explicit_reset: bool,
     ) -> dict:
         """
         - MFA 강제가 활성화 되어있고, enforce_mfa_type과 user_mfa_type이 다를 때 user_vo_mfa_type이 OTP이면 _delete_otp_secret호출 해야함 (기존 MFA를 비활성화)
@@ -739,14 +743,14 @@ class UserService(BaseService):
         new_options = copy.deepcopy(user_mfa_options)
 
         # mfa를 disable 해야하는 경우
-        if should_reset_mfa:
+        if is_explicit_reset:
             delete_field_map = {"OTP": "user_secret_id", "EMAIL": "email"}
             if user_mfa_type in delete_field_map:
                 if user_mfa_type == "OTP" and user_mfa_state == "ENABLED":
                     self._delete_otp_secret(user_vo, domain_id)
                 new_options.pop(delete_field_map[user_mfa_type], None)
 
-        if enforce_mfa:
+        if is_enforced_mfa:
             new_options["enforce"] = True
         else:
             new_options.pop("enforce", None)
@@ -756,9 +760,9 @@ class UserService(BaseService):
     def _get_mfa_base_status(
         self,
         user_mfa: dict,
-        enforce_mfa: bool,
+        is_enforced_mfa: bool,
         enforce_mfa_type: Optional[str],
-        should_reset_mfa: bool,  # 기존 정보가 들어있는데 명시적으로 삭제해야 하는 경우
+        is_explicit_reset: bool,  # 기존 정보가 들어있는데 명시적으로 삭제해야 하는 경우
     ) -> dict:
         """
         MFA 기본 설정 (state, mfa_type) 관리
@@ -774,14 +778,14 @@ class UserService(BaseService):
         current_type = user_mfa.get("mfa_type")
 
         # 명시적으로 disable 처리 해야하는 경우.
-        if should_reset_mfa:
-            if enforce_mfa:
+        if is_explicit_reset:
+            if is_enforced_mfa:
                 return {"state": "DISABLED", "mfa_type": current_type}
             else:
                 return {"state": "DISABLED"}
 
         else:
-            if enforce_mfa:
+            if is_enforced_mfa:
                 # MFA 강제 시 타입이 변경되면 비활성화 상태로 리셋
                 if current_type != enforce_mfa_type:
                     return {"state": "DISABLED", "mfa_type": enforce_mfa_type}
@@ -799,7 +803,7 @@ class UserService(BaseService):
 
     def _validate_mfa_enforce_params(
         self,
-        enforce_mfa: bool,
+        is_enforced_mfa: bool,
         enforce_mfa_type: Optional[str],
         auth_type: str,
     ) -> None:
@@ -809,7 +813,7 @@ class UserService(BaseService):
         - enforce mfa가 없을 때 enforce_mfa_type이 있으면 에러 발생 (enforce_mfa가 없을때 유저가 개인적으로 설정하는건 따로 api가 있음)
         """
 
-        if enforce_mfa:
+        if is_enforced_mfa:
             if not enforce_mfa_type:
                 raise ERROR_REQUIRED_PARAMETER(key="enforce_mfa_type")
 
@@ -827,12 +831,12 @@ class UserService(BaseService):
 
     def _should_reset_current_mfa(
         self,
-        enforce_mfa: bool,
+        is_enforced_mfa: bool,
         enforce_mfa_type: str | None,
         user_mfa_type: str | None,
     ) -> bool:
         return (
-            enforce_mfa
+            is_enforced_mfa
             and enforce_mfa_type != user_mfa_type
             and user_mfa_type is not None
         )
