@@ -44,10 +44,17 @@ class CustomGraphvizOutput(GraphvizOutput):
 
         attributes = indent_join.join(self.generate_attributes())
 
-        layers = {"interface": [], "service": [], "manager": [], "lib": [], "other": []}
+        layers = {
+            "interface": [],
+            "service": [],
+            "manager": [],
+            "model": [],
+            "lib": [],
+            "other": [],
+        }
         for node in self.processor.nodes():
             layer_found = False
-            for layer_name in ["interface", "service", "manager", "lib"]:
+            for layer_name in ["interface", "service", "manager", "model", "lib"]:
                 if f".{layer_name}." in node.name:
                     layers[layer_name].append(node)
                     layer_found = True
@@ -56,7 +63,7 @@ class CustomGraphvizOutput(GraphvizOutput):
                 layers["other"].append(node)
 
         all_nodes_output = []
-        layer_order = ["interface", "service", "manager", "lib", "other"]
+        layer_order = ["interface", "service", "manager", "model", "lib", "other"]
 
         for layer_name in layer_order:
             nodes_in_layer = layers[layer_name]
@@ -65,7 +72,7 @@ class CustomGraphvizOutput(GraphvizOutput):
 
             all_nodes_output.append(f'subgraph "cluster_{layer_name}" {{')
             all_nodes_output.append(f'    label = "{layer_name.capitalize()} Layer";')
-            all_nodes_output.append('    style = "filled"; color = "lightgrey";')
+            all_nodes_output.append('    style = "filled"; color = "whitesmoke";')
 
             for node in nodes_in_layer:
                 attr = {
@@ -96,35 +103,27 @@ class CustomGraphvizOutput(GraphvizOutput):
 
     def done(self):
         """
-        Generates the graph, saves the DOT file, and then runs the tool to
-        render the output file. Captures and prints any errors from the tool.
+        Generates the graph and runs the tool to render the output file,
+        piping the DOT source directly to the tool without creating an
+        intermediate .dot file. Captures and prints any errors from the tool.
         """
         source = self.generate()
-
-        dot_filename = self.output_file.replace(".svg", ".dot")
-        try:
-            with open(dot_filename, "w", encoding="utf-8") as f:
-                f.write(source)
-            print(f"Successfully saved DOT source to {dot_filename}")
-        except IOError as e:
-            print(f"Error writing DOT file {dot_filename}: {e}")
-            return
 
         if not self.tool:
             print("Graphviz tool is not specified. Skipping rendering.")
             return
 
-        args = [
-            self.tool,
-            f"-T{self.output_type}",
-            "-o",
-            self.output_file,
-            dot_filename,
-        ]
+        args = [self.tool, f"-T{self.output_type}", "-o", self.output_file]
 
         try:
-            print(f"Running command: {' '.join(args)}")
-            result = subprocess.run(args, capture_output=True, text=True, check=False)
+            print(f"Running command: {' '.join(args)} (piping DOT source)")
+            result = subprocess.run(
+                args,
+                input=source,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
 
             if result.returncode == 0:
                 print(f"Successfully generated call graph: {self.output_file}")
