@@ -888,8 +888,8 @@ class UserService(BaseService):
     def _should_reset_current_mfa(
         self,
         is_enforced_mfa: bool,
-        enforce_mfa_type: str | None,
-        user_mfa_type: str | None,
+        enforce_mfa_type: Union[str, None],
+        user_mfa_type: Union[str, None],
     ) -> bool:
         """
         Determine if current MFA configuration should be reset due to type mismatch.

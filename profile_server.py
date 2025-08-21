@@ -152,10 +152,27 @@ class PyCallGraphInterceptor(grpc.ServerInterceptor):
 
         def profiled_behavior(request, context):
             project_root = os.path.abspath(os.path.dirname(__file__))
-            method_name = handler_call_details.method.replace("/", "_").strip("_")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            method_path = handler_call_details.method
+
+            # Extract resource name from method path, e.g., 'Token' from '/spaceone.api.identity.v2.Token/issue'
+            try:
+                method_parts = method_path.strip("/").split("/")
+                service_full_name = method_parts[0]
+                resource_name = service_full_name.split(".")[-1]
+                method_action = method_parts[1]
+            except IndexError:
+                resource_name = "unknown"
+                method_action = "unknown"
+
+            # Create a specific directory for the resource
+            output_dir = os.path.join(project_root, "callgraph", resource_name)
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Generate a clean method name for the filename
+            clean_method_name = f"{resource_name}_{method_action}"
+            timestamp = datetime.now().strftime("%Y%m%d_%Hh%Mm%Ss")
             output_file = os.path.join(
-                project_root, f"callgraph_{method_name}_{timestamp}_dot.svg"
+                output_dir, f"{clean_method_name}_{timestamp}.svg"
             )
 
             config = Config()
@@ -163,7 +180,7 @@ class PyCallGraphInterceptor(grpc.ServerInterceptor):
 
             output = CustomGraphvizOutput(
                 output_file=output_file,
-                tool="/opt/homebrew/bin/dot",
+                tool="/opt/homebrew/bin/dot",   
                 output_type="svg",
                 rankdir="LR",
             )
