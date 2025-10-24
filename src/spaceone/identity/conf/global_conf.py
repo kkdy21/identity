@@ -108,11 +108,29 @@ CONNECTORS = {
         "client_timeout": 3600,
     },
     "SMTPConnector": {
-        # "host": "smtp.mail.com",
-        # "port": "1234",
-        # "user": "cloudforet",
-        # "password": "1234",
-        # "from_email": "support@cloudforet.com",
+        "gmail": {
+            "from_email": "",
+            "refresh_token": "",
+            "client_id": "",
+            "client_secret": "",
+            "host": "smtp.gmail.com",
+            "port": 587,
+        },
+        # "microsoft": {
+        #     "from_email": "noreply@company.com",
+        #     "client_id": "",
+        #     "client_secret": "",
+        #     "tenant_id": "",
+        #     "host": "smtp.office365.com",
+        #     "port": 587,
+        # },
+        # "basic": {
+        #     "from_email": "",
+        #     "host": "smtp.naver.com",
+        #     "port": 587,
+        #     "user": "",
+        #     "password": "",
+        # },
     },
 }
 
