@@ -74,9 +74,14 @@ class UserService(BaseService):
         """
 
         user_vo = self.create_user(params.dict())
+
+        if self._check_external_user(user_vo):
+            self._send_invite_email_to_external_user(user_vo)
+
         return UserResponse(**user_vo.to_dict())
 
-    def create_user(self, params: dict) -> User:
+    @transaction(permission="identity:User.write", role_types=["DOMAIN_ADMIN"])
+    def create_user(self, params: UserCreateRequest) -> User:
         user_id = params["user_id"]
         auth_type = params["auth_type"]
         reset_password = params["reset_password"]
@@ -144,29 +149,6 @@ class UserService(BaseService):
                 )
         else:
             user_vo = self.user_mgr.create_user(params)
-            user_id = user_vo.user_id
-
-            if auth_type == "EXTERNAL" and self._check_invite_external_user_eligibility(
-                user_id, user_id
-            ):
-                email_mgr = EmailManager()
-
-                domain_name = self._get_domain_name(domain_id)
-                domain_display_name = self._get_domain_display_name(
-                    domain_id, domain_name
-                )
-
-                console_link = self._get_console_url(domain_name)
-                external_auth_provider = self._get_external_auth_provider(domain_id)
-
-                email_mgr.send_invite_email_when_external_user_added(
-                    domain_display_name,
-                    user_id,
-                    user_id,
-                    console_link,
-                    language,
-                    external_auth_provider,
-                )
 
         return user_vo
 
@@ -696,6 +678,33 @@ class UserService(BaseService):
             secret_manager.delete_user_secret_with_system_token(
                 domain_id, user_secret_id
             )
+
+    def _check_external_user(self, user_vo: User):
+        return (
+            user_vo.auth_type == "EXTERNAL"
+            and self._check_invite_external_user_eligibility(
+                user_vo.user_id, user_vo.user_id
+            )
+        )
+
+    def _send_invite_email_to_external_user(self, user_vo: User):
+        domain_name = self._get_domain_name(user_vo.domain_id)
+        domain_display_name = self._get_domain_display_name(
+            user_vo.domain_id, domain_name
+        )
+
+        console_link = self._get_console_url(domain_name)
+        external_auth_provider = self._get_external_auth_provider(user_vo.domain_id)
+
+        email_manager = EmailManager()
+        email_manager.send_invite_email_when_external_user_added(
+            domain_display_name,
+            user_vo.user_id,
+            user_vo.user_id,
+            console_link,
+            user_vo.language,
+            external_auth_provider,
+        )
 
     def _get_updated_required_actions(
         self,
