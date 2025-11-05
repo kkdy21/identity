@@ -4,12 +4,12 @@ import os
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from spaceone.core import config
-from spaceone.identity.connector.smtp_connector import SMTPConnector
+from spaceone.identity.connector.smtp_connector.base import SMTPConnector
 from spaceone.identity.manager.mfa_manager.base import MFAManager
 
 _LOGGER = logging.getLogger(__name__)
 
-TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), f"../../template")
+TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "../../template")
 JINJA_ENV = Environment(
     loader=FileSystemLoader(searchpath=TEMPLATE_PATH), autoescape=select_autoescape()
 )
@@ -39,11 +39,24 @@ class EmailMFAManager(MFAManager):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.smtp_connector = SMTPConnector()
+
+        # Config에서 provider 확인
+        provider = (
+            config.get_global("CONNECTORS", {})
+            .get("SMTPConnector", {})
+            .get("provider", "basic")
+        )
+
+        # provider에 맞는 Connector 인스턴스 생성
+        self.smtp_connector = SMTPConnector.get_connector_by_provider(provider)
 
     def enable_mfa(self, user_id: str, domain_id: str, user_mfa: dict, user_vo):
         self.send_mfa_verify_email(
-            user_id, domain_id, user_mfa["options"].get("email"), user_vo.language, user_mfa
+            user_id,
+            domain_id,
+            user_mfa["options"].get("email"),
+            user_vo.language,
+            user_mfa,
         )
         return user_mfa
 
@@ -53,7 +66,6 @@ class EmailMFAManager(MFAManager):
         )
 
     def confirm_mfa(self, credentials: dict, verify_code: str):
-
         confirm_result = self.check_mfa_verify_code(credentials, verify_code)
 
         return confirm_result
@@ -61,17 +73,26 @@ class EmailMFAManager(MFAManager):
     def set_mfa_options(self, user_mfa: dict, credentials: dict):
         return user_mfa
 
-    def send_mfa_verify_email(self, user_id: str, domain_id: str, email: str, language: str, user_mfa: dict = None):
+    def send_mfa_verify_email(
+        self,
+        user_id: str,
+        domain_id: str,
+        email: str,
+        language: str,
+        user_mfa: dict = None,
+    ):
         service_name = self._get_service_name()
         language_map_info = LANGUAGE_MAPPER.get(language, "default")
         credentials = {"user_id": user_id, "domain_id": domain_id}
-        verify_code = self.create_mfa_verify_code(user_id, domain_id, credentials, user_mfa)
+        verify_code = self.create_mfa_verify_code(
+            user_id, domain_id, credentials, user_mfa
+        )
 
         template = JINJA_ENV.get_template(f"verification_MFA_code_{language}.html")
         email_contents = template.render(
             user_name=user_id, verification_code=verify_code, service_name=service_name
         )
-        subject = f'[{service_name}] {language_map_info["verify_mfa_email"]}'
+        subject = f"[{service_name}] {language_map_info['verify_mfa_email']}"
 
         self.smtp_connector.send_email(email, subject, email_contents)
 
@@ -88,7 +109,7 @@ class EmailMFAManager(MFAManager):
             authentication_code=verify_code,
             service_name=service_name,
         )
-        subject = f'[{service_name}] {language_map_info["authentication_mfa_email"]}'
+        subject = f"[{service_name}] {language_map_info['authentication_mfa_email']}"
 
         self.smtp_connector.send_email(email, subject, email_contents)
 
