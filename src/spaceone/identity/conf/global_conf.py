@@ -108,29 +108,36 @@ CONNECTORS = {
         "client_timeout": 3600,
     },
     "SMTPConnector": {
-        "gmail": {
-            "from_email": "",
-            "refresh_token": "",
-            "client_id": "",
-            "client_secret": "",
-            "host": "smtp.gmail.com",
-            "port": 587,
-        },
-        # "microsoft": {
-        #     "from_email": "noreply@company.com",
-        #     "client_id": "",
-        #     "client_secret": "",
-        #     "tenant_id": "",
-        #     "host": "smtp.office365.com",
-        #     "port": 587,
-        # },
-        # "basic": {
-        #     "from_email": "",
-        #     "host": "smtp.naver.com",
-        #     "port": 587,
-        #     "user": "",
-        #     "password": "",
-        # },
+        # ============================================
+        # Basic SMTP (현재 설정)
+        # ============================================
+        "provider": "basic",  # gmail, microsoft, basic 중 선택
+        "from_email": "no-reply-spaceone@megazone.com",  # 발신자 이메일
+        "user": "no-reply-spaceone@mz.co.kr",  # Basic: SMTP username
+        "secret": "inpiyzesxauizbty",  # Basic: SMTP password
+        "host": "smtp.gmail.com",  # SMTP 서버 호스트
+        "port": 587,  # SMTP 포트
+        # credential은 Basic에서 무시됨
+        # ============================================
+        # Gmail OAuth2.0 예시 (사용 시 주석 해제)
+        # ============================================
+        # "provider": "gmail",
+        # "from_email": "sender@gmail.com",
+        # "user": "xxx.apps.googleusercontent.com",  # Gmail: OAuth2.0 client_id
+        # "secret": "GOCSPX-xxx",  # Gmail: OAuth2.0 client_secret
+        # "credential": "1//xxx",  # Gmail: OAuth2.0 refresh_token
+        # "host": "smtp.gmail.com",  # 기본값 (생략 가능)
+        # "port": 587,  # 기본값 (생략 가능)
+        # ============================================
+        # Microsoft OAuth2.0 예시 (사용 시 주석 해제)
+        # ============================================
+        # "provider": "microsoft",
+        # "from_email": "sender@company.com",
+        # "user": "xxx-xxx-xxx",  # Microsoft: Azure AD client_id (App ID)
+        # "secret": "xxx~",  # Microsoft: Azure AD client_secret
+        # "credential": "xxx-xxx-xxx",  # Microsoft: Azure AD tenant_id
+        # "host": "smtp.office365.com",  # 기본값 (생략 가능)
+        # "port": 587,  # 기본값 (생략 가능)
     },
 }
 
